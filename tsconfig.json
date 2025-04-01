@@ -4,7 +4,9 @@
 		"outDir": "dist",
 		"target": "es2022", // Node.js 18
 		"lib": [
-			"es2022"
+			"es2022",
+			"DOM",
+			"DOM.Iterable"
 		],
 		"noPropertyAccessFromIndexSignature": false,
 		"isolatedModules": true

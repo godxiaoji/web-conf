@@ -1,28 +1,15 @@
 /* eslint-disable @typescript-eslint/naming-convention, @typescript-eslint/no-unsafe-return */
-import {isDeepStrictEqual} from 'node:util';
-import process from 'node:process';
-import fs from 'node:fs';
-import path from 'node:path';
-import crypto from 'node:crypto';
-import assert from 'node:assert';
 import {
 	getProperty,
 	hasProperty,
 	setProperty,
 	deleteProperty,
 } from 'dot-prop';
-import envPaths from 'env-paths';
-import {writeFileSync as atomicWriteFileSync} from 'atomically';
 import {Ajv2020 as Ajv, type ValidateFunction as AjvValidateFunction} from 'ajv/dist/2020.js';
 import ajvFormatsModule from 'ajv-formats';
-import debounceFn from 'debounce-fn';
 import semver from 'semver';
 import {type JSONSchema} from 'json-schema-typed';
-import {
-	concatUint8Arrays,
-	stringToUint8Array,
-	uint8ArrayToString,
-} from 'uint8array-extras';
+import {isEqual} from 'lodash-es';
 import {
 	type Deserialize,
 	type Migrations,
@@ -36,8 +23,6 @@ import {
 
 // FIXME: https://github.com/ajv-validator/ajv/issues/2047
 const ajvFormats = ajvFormatsModule.default;
-
-const encryptionAlgorithm = 'aes-256-cbc';
 
 const createPlainObject = <T = Record<string, unknown>>(): T => Object.create(null);
 
@@ -64,7 +49,6 @@ export default class Conf<T extends Record<string, any> = Record<string, unknown
 	readonly path: string;
 	readonly events: EventTarget;
 	readonly #validator?: AjvValidateFunction;
-	readonly #encryptionKey?: string | Uint8Array | NodeJS.TypedArray | DataView;
 	readonly #options: Readonly<Partial<Options<T>>>;
 	readonly #defaultValues: Partial<T> = {};
 
@@ -84,7 +68,7 @@ export default class Conf<T extends Record<string, any> = Record<string, unknown
 				throw new Error('Please specify the `projectName` option.');
 			}
 
-			options.cwd = envPaths(options.projectName, {suffix: options.projectSuffix}).config;
+			options.cwd = options.projectName + (options.projectSuffix ? `-${options.projectSuffix}` : '');
 		}
 
 		this.#options = options;
@@ -132,10 +116,9 @@ export default class Conf<T extends Record<string, any> = Record<string, unknown
 		}
 
 		this.events = new EventTarget();
-		this.#encryptionKey = options.encryptionKey;
 
 		const fileExtension = options.fileExtension ? `.${options.fileExtension}` : '';
-		this.path = path.resolve(options.cwd, `${options.configName ?? 'config'}${fileExtension}`);
+		this.path = `${options.cwd}/${options.configName ?? 'config'}${fileExtension}`;
 
 		const fileStore = this.store;
 		const store = Object.assign(createPlainObject(), options.defaults, fileStore);
@@ -151,9 +134,7 @@ export default class Conf<T extends Record<string, any> = Record<string, unknown
 		// We defer validation until after migrations are applied so that the store can be updated to the current schema.
 		this._validate(store);
 
-		try {
-			assert.deepEqual(fileStore, store);
-		} catch {
+		if (!isEqual(fileStore, store)) {
 			this.store = store;
 		}
 
@@ -332,7 +313,7 @@ export default class Conf<T extends Record<string, any> = Record<string, unknown
 
 	get store(): T {
 		try {
-			const data = fs.readFileSync(this.path, this.#encryptionKey ? null : 'utf8');
+			const data = localStorage.getItem(this.path) ?? undefined;
 			const dataString = this._encryptData(data);
 			const deserializedData = this._deserialize(dataString);
 			this._validate(deserializedData);
@@ -366,22 +347,8 @@ export default class Conf<T extends Record<string, any> = Record<string, unknown
 		}
 	}
 
-	private _encryptData(data: string | Uint8Array): string {
-		if (!this.#encryptionKey) {
-			return typeof data === 'string' ? data : uint8ArrayToString(data);
-		}
-
-		// Check if an initialization vector has been used to encrypt the data.
-		try {
-			const initializationVector = data.slice(0, 16);
-			const password = crypto.pbkdf2Sync(this.#encryptionKey, initializationVector.toString(), 10_000, 32, 'sha512');
-			const decipher = crypto.createDecipheriv(encryptionAlgorithm, password, initializationVector);
-			const slice = data.slice(17);
-			const dataUpdate = typeof slice === 'string' ? stringToUint8Array(slice) : slice;
-			return uint8ArrayToString(concatUint8Arrays([decipher.update(dataUpdate), decipher.final()]));
-		} catch {}
-
-		return data.toString();
+	private _encryptData(data?: string): string {
+		return data ? data.toString() : JSON.stringify(createPlainObject());
 	}
 
 	private _handleChange<Key extends keyof T>(
@@ -404,7 +371,7 @@ export default class Conf<T extends Record<string, any> = Record<string, unknown
 			const oldValue = currentValue;
 			const newValue = getter();
 
-			if (isDeepStrictEqual(newValue, oldValue)) {
+			if (isEqual(newValue, oldValue)) {
 				return;
 			}
 
@@ -439,57 +406,22 @@ export default class Conf<T extends Record<string, any> = Record<string, unknown
 
 	private _ensureDirectory(): void {
 		// Ensure the directory exists as it could have been deleted in the meantime.
-		fs.mkdirSync(path.dirname(this.path), {recursive: true});
 	}
 
 	private _write(value: T): void {
-		let data: string | Uint8Array = this._serialize(value);
+		const data: string = this._serialize(value);
 
-		if (this.#encryptionKey) {
-			const initializationVector = crypto.randomBytes(16);
-			const password = crypto.pbkdf2Sync(this.#encryptionKey, initializationVector.toString(), 10_000, 32, 'sha512');
-			const cipher = crypto.createCipheriv(encryptionAlgorithm, password, initializationVector);
-			data = concatUint8Arrays([initializationVector, stringToUint8Array(':'), cipher.update(stringToUint8Array(data)), cipher.final()]);
-		}
-
-		// Temporary workaround for Conf being packaged in a Ubuntu Snap app.
-		// See https://github.com/sindresorhus/conf/pull/82
-		if (process.env.SNAP) {
-			fs.writeFileSync(this.path, data, {mode: this.#options.configFileMode});
-		} else {
-			try {
-				atomicWriteFileSync(this.path, data, {mode: this.#options.configFileMode});
-			} catch (error: unknown) {
-				// Fix for https://github.com/sindresorhus/electron-store/issues/106
-				// Sometimes on Windows, we will get an EXDEV error when atomic writing
-				// (even though to the same directory), so we fall back to non atomic write
-				if ((error as any)?.code === 'EXDEV') {
-					fs.writeFileSync(this.path, data, {mode: this.#options.configFileMode});
-					return;
-				}
-
-				throw error;
-			}
-		}
+		localStorage.setItem(this.path, data);
 	}
 
 	private _watch(): void {
 		this._ensureDirectory();
 
-		if (!fs.existsSync(this.path)) {
-			this._write(createPlainObject<T>());
-		}
-
-		if (process.platform === 'win32') {
-			fs.watch(this.path, {persistent: false}, debounceFn(() => {
-			// On Linux and Windows, writing to the config file emits a `rename` event, so we skip checking the event type.
+		window.addEventListener('storage', (event: StorageEvent) => {
+			if (event.key === this.path) {
 				this.events.dispatchEvent(new Event('change'));
-			}, {wait: 100}));
-		} else {
-			fs.watchFile(this.path, {persistent: false}, debounceFn(() => {
-				this.events.dispatchEvent(new Event('change'));
-			}, {wait: 5000}));
-		}
+			}
+		}, false);
 	}
 
 	private _migrate(migrations: Migrations<T>, versionToMigrate: string, beforeEachMigration?: BeforeEachMigrationCallback<T>): void {

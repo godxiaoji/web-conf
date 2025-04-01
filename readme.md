@@ -1,6 +1,6 @@
 # conf
 
-> Simple config handling for your app or module
+> Simple config handling for your web app
 
 All you have to care about is what to persist. This module will handle all the dull details like where and how.
 
@@ -12,13 +12,13 @@ I initially made this tool to let command-line tools persist some data.
 ## Install
 
 ```sh
-npm install conf
+npm install webapp-conf
 ```
 
 ## Usage
 
 ```js
-import Conf from 'conf';
+import Conf from 'webapp-conf';
 
 const config = new Conf({projectName: 'foo'});
 
@@ -64,12 +64,12 @@ Type: `object`
 
 [JSON Schema](https://json-schema.org) to validate your config data.
 
-This will be the [`properties`](https://json-schema.org/understanding-json-schema/reference/object.html#properties) object of the JSON schema. That is, define `schema` as an object where each key is the name of your data's property and each value is a JSON schema used to validate that property. 
+This will be the [`properties`](https://json-schema.org/understanding-json-schema/reference/object.html#properties) object of the JSON schema. That is, define `schema` as an object where each key is the name of your data's property and each value is a JSON schema used to validate that property.
 
 Example:
 
 ```js
-import Conf from 'conf';
+import Conf from 'webapp-conf';
 
 const schema = {
 	foo: {
@@ -107,7 +107,7 @@ Top-level properties for the schema, excluding `properties` field.
 Example:
 
 ```js
-import Conf from 'conf';
+import Conf from 'webapp-conf';
 
 const store = new Conf({
 	projectName: 'foo',
@@ -131,7 +131,7 @@ Under the hood, the JSON Schema validator [ajv](https://ajv.js.org/json-schema.h
 Example:
 
 ```js
-import Conf from 'conf';
+import Conf from 'webapp-conf';
 
 const store = new Conf({
 	projectName: 'foo',
@@ -158,7 +158,7 @@ The `migrations` object should consist of a key-value pair of `'version': handle
 Example:
 
 ```js
-import Conf from 'conf';
+import Conf from 'webapp-conf';
 
 const store = new Conf({
 	projectName: 'foo',
@@ -202,7 +202,7 @@ This can be useful for logging purposes, preparing migration data, etc.
 Example:
 
 ```js
-import Conf from 'conf';
+import Conf from 'webapp-conf';
 
 console.log = someLogger.log;
 
@@ -267,26 +267,6 @@ Overrides `projectName`.
 
 The only use-case I can think of is having the config located in the app directory or on some external storage.
 
-#### encryptionKey
-
-Type: `string | Uint8Array | TypedArray | DataView`\
-Default: `undefined`
-
-Note that this is **not intended for security purposes**, since the encryption key would be easily found inside a plain-text Node.js app.
-
-Its main use is for obscurity. If a user looks through the config directory and finds the config file, since it's just a JSON file, they may be tempted to modify it. By providing an encryption key, the file will be obfuscated, which should hopefully deter any users from doing so.
-
-When specified, the store will be encrypted using the [`aes-256-cbc`](https://en.wikipedia.org/wiki/Block_cipher_mode_of_operation) encryption algorithm.
-
-#### fileExtension
-
-Type: `string`\
-Default: `'json'`
-
-Extension of the config file.
-
-You would usually not need this, but could be useful if you want to interact with a file with a custom file extension that can be associated with your app. These might be simple save/export/preference files that are intended to be shareable or saved outside of the app.
-
 #### clearInvalidConfig
 
 Type: `boolean`\
@@ -333,7 +313,7 @@ Default: `true`
 Accessing nested properties by dot notation. For example:
 
 ```js
-import Conf from 'conf';
+import Conf from 'webapp-conf';
 
 const config = new Conf({projectName: 'foo'});
 
@@ -352,7 +332,7 @@ console.log(config.get('foo.bar.foobar'));
 Alternatively, you can set this option to `false` so the whole string would be treated as one key.
 
 ```js
-import Conf from 'conf';
+import Conf from 'webapp-conf';
 
 const config = new Conf({
 	projectName: 'foo',
@@ -473,31 +453,7 @@ conf.store = {
 
 #### .path
 
-Get the path to the config file.
-
-## FAQ
-
-### How is this different from [`configstore`](https://github.com/yeoman/configstore)?
-
-I'm also the author of `configstore`. While it's pretty good, I did make some mistakes early on that are hard to change at this point. This module is the result of everything I learned from making `configstore`. Mainly where the config is stored. In `configstore`, the config is stored in `~/.config` (which is mainly a Linux convention) on all systems, while `conf` stores config in the system default [user config directory](https://github.com/sindresorhus/env-paths#pathsconfig). The `~/.config` directory, it turns out, often have an incorrect permission on macOS and Windows, which has caused a lot of grief for users.
-
-### Can I use YAML or another serialization format?
-
-The `serialize` and `deserialize` options can be used to customize the format of the config file, as long as the representation is compatible with `utf8` encoding.
-
-Example using YAML:
-
-```js
-import Conf from 'conf';
-import yaml from 'js-yaml';
-
-const config = new Conf({
-	projectName: 'foo',
-	fileExtension: 'yaml',
-	serialize: yaml.safeDump,
-	deserialize: yaml.safeLoad
-});
-```
+Get the path to the config.
 
 ## Related
 

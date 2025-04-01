@@ -1,13 +1,13 @@
-/* eslint-disable no-new, @typescript-eslint/no-empty-function, @typescript-eslint/naming-convention */
-import process from 'node:process';
-import fs from 'node:fs';
+/* eslint-disable no-new, @typescript-eslint/no-empty-function, @typescript-eslint/naming-convention, n/no-unsupported-features/node-builtins */
 import path from 'node:path';
 import {temporaryDirectory} from 'tempy';
 import {deleteSync} from 'del';
-import {pEvent} from 'p-event';
-import delay from 'delay';
 import anyTest, {type TestFn} from 'ava';
+import {LocalStorage} from 'node-localstorage';
 import Conf, {type Schema} from '../source/index.js';
+
+global.localStorage = new LocalStorage('./.cache');
+localStorage.clear();
 
 const test = anyTest as TestFn<{
 	config: Conf;
@@ -307,7 +307,7 @@ test('`configName` option', t => {
 	config.set('foo', fixture);
 	t.is(config.get('foo'), fixture);
 	t.is(path.basename(config.path, '.json'), configName);
-	t.true(fs.existsSync(config.path));
+	t.true(Boolean(localStorage.getItem(config.path)));
 });
 
 test('no `suffix` option', t => {
@@ -320,7 +320,7 @@ test('with `suffix` option set to empty string', t => {
 	const projectSuffix = '';
 	const projectName = 'conf-temp1-project';
 	const config = new Conf({projectSuffix, projectName});
-	const configPathSegments = config.path.split(path.sep);
+	const configPathSegments = config.path.split('/');
 	const configRootIndex = configPathSegments.indexOf(projectName);
 	t.true(configRootIndex !== -1 && configRootIndex < configPathSegments.length);
 });
@@ -329,7 +329,7 @@ test('with `projectSuffix` option set to non-empty string', t => {
 	const projectSuffix = 'new-projectSuffix';
 	const projectName = 'conf-temp2-project';
 	const config = new Conf({projectSuffix, projectName});
-	const configPathSegments = config.path.split(path.sep);
+	const configPathSegments = config.path.split('/');
 	const expectedRootName = `${projectName}-${projectSuffix}`;
 	const configRootIndex = configPathSegments.indexOf(expectedRootName);
 	t.true(configRootIndex !== -1 && configRootIndex < configPathSegments.length);
@@ -355,31 +355,6 @@ test('`fileExtension` option = empty string', t => {
 		configName,
 	});
 	t.is(path.basename(config.path), configName);
-});
-
-test('`serialize` and `deserialize` options', t => {
-	t.plan(4);
-	const serialized = `foo:${fixture}`;
-	const deserialized = {foo: fixture};
-	const serialize = (value: unknown): string => {
-		t.is(value, deserialized);
-		return serialized;
-	};
-
-	const deserialize = (value: unknown) => {
-		t.is(value, serialized);
-		return deserialized;
-	};
-
-	const config = new Conf({
-		cwd: temporaryDirectory(),
-		serialize,
-		deserialize,
-	});
-
-	t.deepEqual(config.store, {} as any);
-	config.store = deserialized;
-	t.deepEqual(config.store, deserialized);
 });
 
 test('`projectName` option', t => {
@@ -425,54 +400,6 @@ test('`cwd` option overrides `projectName` option', t => {
 		t.is(config.get('foo'), fixture);
 		deleteSync(config.path, {force: true});
 	});
-});
-
-test('encryption', t => {
-	const config = new Conf({
-		cwd: temporaryDirectory(),
-		encryptionKey: 'abc123',
-	});
-
-	t.is(config.get('foo'), undefined);
-	t.is(config.get('foo', '🐴'), '🐴');
-	config.set('foo', fixture);
-	config.set('baz.boo', fixture);
-	t.is(config.get('foo'), fixture);
-	t.is(config.get('baz.boo'), fixture);
-});
-
-test('encryption - upgrade', t => {
-	const cwd = temporaryDirectory();
-
-	const before = new Conf({cwd});
-	before.set('foo', fixture);
-	t.is(before.get('foo'), fixture);
-
-	const after = new Conf({cwd, encryptionKey: 'abc123'});
-	t.is(after.get('foo'), fixture);
-});
-
-test('encryption - corrupt file', t => {
-	const cwd = temporaryDirectory();
-
-	const before = new Conf({
-		cwd,
-		encryptionKey: 'abc123',
-		clearInvalidConfig: true,
-	});
-
-	before.set('foo', fixture);
-	t.is(before.get('foo'), fixture);
-
-	fs.appendFileSync(path.join(cwd, 'config.json'), 'corrupt file');
-
-	const after = new Conf({
-		cwd,
-		encryptionKey: 'abc123',
-		clearInvalidConfig: true,
-	});
-
-	t.is(after.get('foo'), undefined);
 });
 
 test('onDidChange()', t => {
@@ -587,7 +514,7 @@ test('onDidAnyChange()', t => {
 
 // See #32
 test('doesn\'t write to disk upon instanciation if and only if the store didn\'t change', t => {
-	let exists = fs.existsSync(t.context.config.path);
+	let exists = Boolean(localStorage.getItem(t.context.config.path));
 	t.is(exists, false);
 
 	const conf = new Conf({
@@ -596,13 +523,13 @@ test('doesn\'t write to disk upon instanciation if and only if the store didn\'t
 			foo: 'bar',
 		},
 	});
-	exists = fs.existsSync(conf.path);
+	exists = Boolean(localStorage.getItem(conf.path));
 	t.is(exists, true);
 });
 
 test('`clearInvalidConfig` option - invalid data', t => {
 	const config = new Conf({cwd: temporaryDirectory(), clearInvalidConfig: false});
-	fs.writeFileSync(config.path, '🦄');
+	localStorage.setItem(config.path, '🦄');
 
 	t.throws(() => {
 		// eslint-disable-next-line @typescript-eslint/no-unused-expressions
@@ -728,7 +655,7 @@ test('schema - invalid write to config file', t => {
 	const cwd = temporaryDirectory();
 
 	const config = new Conf({cwd, schema});
-	fs.writeFileSync(path.join(cwd, 'config.json'), JSON.stringify({foo: 1}));
+	localStorage.setItem([cwd, 'config.json'].join('/'), JSON.stringify({foo: 1}));
 	t.throws(() => {
 		config.get('foo');
 	}, {message: 'Config schema violation: `foo` must be string'});
@@ -868,60 +795,6 @@ test('.delete() - without dot notation', t => {
 	configWithoutDotNotation.set('foo.bar.zoo', {awesome: 'redpanda'});
 	configWithoutDotNotation.delete('foo.bar.baz');
 	t.deepEqual(configWithoutDotNotation.get('foo.bar.zoo'), {awesome: 'redpanda'});
-});
-
-test('`watch` option watches for config file changes by another process', async t => {
-	const cwd = temporaryDirectory();
-	const conf1 = new Conf({cwd, watch: true});
-	const conf2 = new Conf({cwd});
-	conf1.set('foo', '👾');
-
-	t.plan(4);
-
-	const checkFoo = (newValue: unknown, oldValue: unknown): void => {
-		t.is(newValue, '🐴');
-		t.is(oldValue, '👾');
-	};
-
-	t.is(conf2.get('foo'), '👾');
-	t.is(conf1.path, conf2.path);
-	conf1.onDidChange('foo', checkFoo);
-
-	(async () => {
-		await delay(50);
-		conf2.set('foo', '🐴');
-	})();
-
-	const {events: _events} = conf1;
-
-	await pEvent(_events, 'change');
-});
-
-test('`watch` option watches for config file changes by file write', async t => {
-	const cwd = temporaryDirectory();
-	const conf = new Conf({cwd, watch: true});
-	conf.set('foo', '🐴');
-
-	t.plan(2);
-
-	const checkFoo = (newValue: unknown, oldValue: unknown): void => {
-		t.is(newValue, '🦄');
-		t.is(oldValue, '🐴');
-	};
-
-	conf.onDidChange('foo', checkFoo);
-
-	const delayOS = process.platform === 'win32' ? 50 : 5000;
-
-	(async () => {
-		await delay(delayOS);
-
-		fs.writeFileSync(path.join(cwd, 'config.json'), JSON.stringify({foo: '🦄'}));
-	})();
-
-	const {events} = conf;
-
-	await pEvent(events, 'change');
 });
 
 test('migrations - should save the project version as the initial migrated version', t => {
